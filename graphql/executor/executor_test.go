@@ -9,6 +9,7 @@ import (
 	"github.com/vektah/gqlparser/v2/ast"
 	"github.com/vektah/gqlparser/v2/gqlerror"
 	"github.com/vektah/gqlparser/v2/parser"
+	"github.com/vektah/gqlparser/v2/validator/rules"
 
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/99designs/gqlgen/graphql/errcode"
@@ -251,6 +252,20 @@ func TestExecutorDisableSuggestion(t *testing.T) {
 			resp.Errors.Error(),
 		)
 	})
+}
+
+func TestExecutorPrecomputesValidationRules(t *testing.T) {
+	calls := 0
+	exec := testexecutor.New()
+	exec.SetDefaultRulesFn(func() *rules.Rules {
+		calls++
+		return rules.NewDefaultRules()
+	})
+	require.Equal(t, 1, calls)
+
+	require.Empty(t, query(exec, "", "{name}").Errors)
+	require.Empty(t, query(exec, "", "{name}").Errors)
+	require.Equal(t, 1, calls)
 }
 
 type testParamMutator struct {

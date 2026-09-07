@@ -138,7 +138,8 @@ func (s *Server) getTransport(r *http.Request) graphql.Transport {
 	return nil
 }
 
-// SetValidationRulesFn is to customize the Default GraphQL Validation Rules
+// SetValidationRulesFn customizes the GraphQL validation rules.
+// The function is evaluated once when this method is called.
 func (s *Server) SetValidationRulesFn(f func() *rules.Rules) {
 	s.exec.SetDefaultRulesFn(f)
 }

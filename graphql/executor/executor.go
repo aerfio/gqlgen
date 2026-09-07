@@ -28,6 +28,7 @@ type Executor struct {
 	parserTokenLimit  int
 	disableSuggestion bool
 	defaultRulesFn    func() *rules.Rules
+	validationRules   *rules.Rules
 }
 
 var _ graphql.GraphExecutor = &Executor{}
@@ -42,13 +43,17 @@ func New(es graphql.ExecutableSchema) *Executor {
 		queryCache:       graphql.NoCache[*ast.QueryDocument]{},
 		ext:              processExtensions(nil),
 		parserTokenLimit: parserTokenNoLimit,
+		defaultRulesFn:   rules.NewDefaultRules,
 	}
+	e.configureSuggestionRules()
 	return e
 }
 
-// SetDefaultRulesFn is to customize the Default GraphQL Validation Rules
+// SetDefaultRulesFn customizes the GraphQL validation rules.
+// The function is evaluated once when this method is called.
 func (e *Executor) SetDefaultRulesFn(f func() *rules.Rules) {
 	e.defaultRulesFn = f
+	e.configureSuggestionRules()
 }
 
 func (e *Executor) CreateOperationContext(
@@ -243,6 +248,32 @@ func (e *Executor) SetParserTokenLimit(limit int) {
 
 func (e *Executor) SetDisableSuggestion(value bool) {
 	e.disableSuggestion = value
+	e.configureSuggestionRules()
+}
+
+func (e *Executor) configureSuggestionRules() {
+	// Customise rules as required
+	// TODO(steve): consider currentRules.RemoveRule(rules.MaxIntrospectionDepth.Name)
+	validationRules := e.defaultRulesFn()
+	if e.disableSuggestion {
+		validationRules.RemoveRule("FieldsOnCorrectType")
+		fieldsOnCorrectTypeRule := rules.FieldsOnCorrectTypeRuleWithoutSuggestions
+		validationRules.AddRule(fieldsOnCorrectTypeRule.Name, fieldsOnCorrectTypeRule.RuleFunc)
+
+		validationRules.RemoveRule("ScalarLeafs")
+		scalarLeafsRule := rules.ScalarLeafsRuleWithoutSuggestions
+		validationRules.AddRule(scalarLeafsRule.Name, scalarLeafsRule.RuleFunc)
+	} else {
+		validationRules.RemoveRule("FieldsOnCorrectTypeWithoutSuggestions")
+		fieldsOnCorrectTypeRule := rules.FieldsOnCorrectTypeRule
+		validationRules.AddRule(fieldsOnCorrectTypeRule.Name, fieldsOnCorrectTypeRule.RuleFunc)
+
+		validationRules.RemoveRule("ScalarLeafsWithoutSuggestions")
+		scalarLeafsRule := rules.ScalarLeafsRule
+		validationRules.AddRule(scalarLeafsRule.Name, scalarLeafsRule.RuleFunc)
+	}
+
+	e.validationRules = validationRules
 }
 
 // parseQuery decodes the incoming query and validates it, pulling from cache if present.
@@ -284,35 +315,7 @@ func (e *Executor) parseQuery(
 		return nil, gqlerror.List{gqlErr}
 	}
 
-	var currentRules *rules.Rules
-	if e.defaultRulesFn == nil {
-		currentRules = rules.NewDefaultRules()
-	} else {
-		currentRules = e.defaultRulesFn()
-	}
-	// Customise rules as required
-	// TODO(steve): consider currentRules.RemoveRule(rules.MaxIntrospectionDepth.Name)
-
-	// swap out the FieldsOnCorrectType rule with one that doesn't provide suggestions
-	if e.disableSuggestion {
-		currentRules.RemoveRule("FieldsOnCorrectType")
-		fieldsOnCorrectTypeRule := rules.FieldsOnCorrectTypeRuleWithoutSuggestions
-		currentRules.AddRule(fieldsOnCorrectTypeRule.Name, fieldsOnCorrectTypeRule.RuleFunc)
-
-		currentRules.RemoveRule("ScalarLeafs")
-		scalarLeafsRule := rules.ScalarLeafsRuleWithoutSuggestions
-		currentRules.AddRule(scalarLeafsRule.Name, scalarLeafsRule.RuleFunc)
-	} else { // or vice versa
-		currentRules.RemoveRule("FieldsOnCorrectTypeWithoutSuggestions")
-		fieldsOnCorrectTypeRule := rules.FieldsOnCorrectTypeRule
-		currentRules.AddRule(fieldsOnCorrectTypeRule.Name, fieldsOnCorrectTypeRule.RuleFunc)
-
-		currentRules.RemoveRule("ScalarLeafsWithoutSuggestions")
-		scalarLeafsRule := rules.ScalarLeafsRule
-		currentRules.AddRule(scalarLeafsRule.Name, scalarLeafsRule.RuleFunc)
-	}
-
-	listErr := validator.ValidateWithRules(e.es.Schema(), doc, currentRules)
+	listErr := validator.ValidateWithRules(e.es.Schema(), doc, e.validationRules)
 	if len(listErr) != 0 {
 		for _, e := range listErr {
 			errcode.Set(e, errcode.ValidationFailed)
